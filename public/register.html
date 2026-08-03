@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Register your shop — AI Printers</title>
+<style>
+  :root {
+    --paper: #EEF0F4; --card: #FFFFFF; --ink: #16233F; --ink-soft: #5B6B8C;
+    --accent: #1B3A6B; --border: #DBDFE7; --warn-soft: #FBEAEA; --warn: #B23B3B;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink); min-height: 100vh;
+    display: flex; justify-content: center; padding: 32px 16px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { width: 100%; max-width: 440px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p.sub { color: var(--ink-soft); font-size: 14px; margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 24px; margin-bottom: 16px; }
+  label { display: block; font-size: 13px; color: var(--ink-soft); margin: 14px 0 6px; }
+  label:first-child { margin-top: 0; }
+  input {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 15px; font-family: inherit; color: var(--ink);
+  }
+  button.submit {
+    width: 100%; margin-top: 20px; padding: 14px; border: none; border-radius: 10px;
+    background: var(--accent); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button.submit:disabled { opacity: 0.6; cursor: not-allowed; }
+  .result { display: none; }
+  .result.show { display: block; }
+  .qr { text-align: center; margin: 8px 0 16px; }
+  .qr img { width: 220px; height: 220px; border: 1px solid var(--border); border-radius: 10px; }
+  .field { margin-bottom: 14px; }
+  .field .k { font-size: 12px; color: var(--ink-soft); }
+  .field .v {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px;
+    background: var(--paper); padding: 8px 10px; border-radius: 6px; word-break: break-all; margin-top: 4px;
+  }
+  .warn { background: var(--warn-soft); color: var(--warn); font-size: 13px; padding: 10px 12px; border-radius: 8px; margin-top: 10px; }
+  .error { color: var(--warn); font-size: 13px; margin-top: 10px; display: none; }
+  .error.show { display: block; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Register your shop</h1>
+    <p class="sub">Set up your print counter and get a QR code customers can scan.</p>
+
+    <div class="card" id="formCard">
+      <label for="name">Shop name</label>
+      <input id="name" type="text" placeholder="e.g. Sharma Cyber Cafe" />
+
+      <label for="address">Address (optional)</label>
+      <input id="address" type="text" placeholder="Street, city" />
+
+      <label for="price">Price per page (₹)</label>
+      <input id="price" type="number" min="1" step="1" placeholder="5" />
+
+      <button class="submit" id="submitBtn">Create print counter</button>
+      <div class="error" id="errorMsg"></div>
+    </div>
+
+    <div class="card result" id="resultCard">
+      <div class="qr"><img id="qrImg" alt="Shop QR code" /></div>
+      <div class="field">
+        <div class="k">Print link</div>
+        <div class="v" id="printUrlOut"></div>
+      </div>
+      <div class="field">
+        <div class="k">Agent token — needed to set up the print agent on your PC</div>
+        <div class="v" id="agentTokenOut"></div>
+      </div>
+      <div class="field">
+        <div class="k">Shop slug</div>
+        <div class="v" id="slugOut"></div>
+      </div>
+      <div class="warn">Save the agent token now — it's shown only once. You'll paste it into <code>print-agent/config.json</code> on the shop PC.</div>
+    </div>
+  </div>
+
+<script>
+const el = (id) => document.getElementById(id);
+
+el('submitBtn').addEventListener('click', async () => {
+  const name = el('name').value.trim();
+  const address = el('address').value.trim();
+  const price = Number(el('price').value);
+
+  el('errorMsg').classList.remove('show');
+
+  if (!name) return showError('Enter a shop name.');
+  if (!price || price <= 0) return showError('Enter a valid price per page.');
+
+  el('submitBtn').disabled = true;
+  el('submitBtn').textContent = 'Creating…';
+
+  try {
+    const res = await fetch('/api/shops', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, address, pricePerPage: price }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not create shop');
+
+    el('formCard').style.display = 'none';
+    el('resultCard').classList.add('show');
+    el('qrImg').src = `/api/shops/${data.slug}/qrcode`;
+    el('printUrlOut').textContent = data.printUrl;
+    el('agentTokenOut').textContent = data.agentToken;
+    el('slugOut').textContent = data.slug;
+  } catch (err) {
+    showError(err.message);
+    el('submitBtn').disabled = false;
+    el('submitBtn').textContent = 'Create print counter';
+  }
+});
+
+function showError(msg) {
+  el('errorMsg').textContent = msg;
+  el('errorMsg').classList.add('show');
+}
+</script>
+</body>
+</html>

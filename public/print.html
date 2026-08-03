@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Print — AI Printers</title>
+<style>
+  :root {
+    --paper: #EEF0F4; --card: #FFFFFF; --ink: #16233F; --ink-soft: #5B6B8C;
+    --accent: #1B3A6B; --accent-soft: #E3E9F5;
+    --success: #1F7A4D; --success-soft: #E6F4EC;
+    --danger: #B23B3B; --danger-soft: #FBEAEA; --border: #DBDFE7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink); min-height: 100vh;
+    display: flex; justify-content: center; padding: 32px 16px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .ticket { width: 100%; max-width: 420px; }
+  .shop-name { font-size: 13px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+  h1 { font-size: 22px; margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 24px; margin-bottom: 16px; }
+  .dropzone {
+    border: 1.5px dashed var(--border); border-radius: 10px; padding: 28px 16px;
+    text-align: center; cursor: pointer; transition: border-color 0.15s, background 0.15s;
+  }
+  .dropzone:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .dropzone p { margin: 8px 0 0; color: var(--ink-soft); font-size: 14px; }
+  .dropzone svg { width: 28px; height: 28px; stroke: var(--ink-soft); }
+  input[type="file"] { display: none; }
+  .preview {
+    display: none; align-items: center; gap: 12px; margin-top: 14px;
+    padding: 10px 12px; background: var(--paper); border-radius: 8px; font-size: 14px;
+  }
+  .preview.show { display: flex; }
+  .preview span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .preview button { border: none; background: none; color: var(--danger); cursor: pointer; font-size: 13px; }
+  .row { display: flex; align-items: center; justify-content: space-between; margin-top: 20px; }
+  .stepper { display: flex; align-items: center; gap: 12px; }
+  .stepper button {
+    width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--card); font-size: 16px; cursor: pointer; color: var(--ink);
+  }
+  .stepper span { min-width: 20px; text-align: center; font-variant-numeric: tabular-nums; }
+  .price { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 20px; }
+  .pay-btn {
+    width: 100%; margin-top: 20px; padding: 14px; border: none; border-radius: 10px;
+    background: var(--accent); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .pay-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .tear { height: 0; border-top: 1.5px dashed var(--border); margin: 24px 0; }
+  .status-card { display: none; }
+  .status-card.show { display: block; }
+  .status-row { display: flex; justify-content: space-between; font-size: 14px; padding: 6px 0; color: var(--ink-soft); }
+  .status-row span:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--ink); }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+  .badge.pending_payment { background: var(--accent-soft); color: var(--accent); }
+  .badge.paid { background: var(--accent-soft); color: var(--accent); }
+  .badge.printed { background: var(--success-soft); color: var(--success); }
+  .badge.failed { background: var(--danger-soft); color: var(--danger); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .error { color: var(--danger); font-size: 13px; margin-top: 10px; display: none; }
+  .error.show { display: block; }
+</style>
+</head>
+<body>
+  <div class="ticket">
+    <div class="shop-name" id="shopLabel">Loading shop…</div>
+    <h1 id="shopHeading">Print your file</h1>
+
+    <div class="card" id="uploadCard">
+      <div class="dropzone" id="dropzone">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5"><path d="M12 16V4M12 4l-4 4M12 4l4 4M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <p>Tap to choose a photo or PDF</p>
+      </div>
+      <input type="file" id="fileInput" accept=".pdf,.jpg,.jpeg,.png" />
+      <div class="preview" id="preview">
+        <span id="fileName"></span>
+        <button id="removeFile">Remove</button>
+      </div>
+
+      <div class="row">
+        <div>Copies</div>
+        <div class="stepper">
+          <button id="decCopies">−</button>
+          <span id="copiesVal">1</span>
+          <button id="incCopies">+</button>
+        </div>
+      </div>
+      <div class="row">
+        <div>Total</div>
+        <div class="price" id="totalPrice">—</div>
+      </div>
+
+      <button class="pay-btn" id="payBtn" disabled>Pay &amp; print</button>
+      <div class="error" id="errorMsg"></div>
+    </div>
+
+    <div class="tear"></div>
+
+    <div class="card status-card" id="statusCard">
+      <div class="status-row"><span>Job</span><span id="jobIdOut">—</span></div>
+      <div class="status-row"><span>Copies</span><span id="jobCopiesOut">—</span></div>
+      <div class="status-row"><span>Amount</span><span id="jobAmountOut">—</span></div>
+      <div class="row">
+        <div>Status</div>
+        <div class="badge" id="statusBadge"><span class="dot"></span><span id="statusText">—</span></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const slug = window.location.pathname.split('/').filter(Boolean).pop();
+let selectedFile = null;
+let copies = 1;
+let pricePerPage = 0;
+let pollTimer = null;
+
+const el = (id) => document.getElementById(id);
+
+async function loadShop() {
+  try {
+    const res = await fetch(`/api/shops/${slug}`);
+    if (!res.ok) throw new Error('Shop not found');
+    const shop = await res.json();
+    pricePerPage = shop.pricePerPage;
+    el('shopLabel').textContent = shop.name;
+    updatePrice();
+  } catch (err) {
+    el('shopLabel').textContent = 'Shop not found';
+    el('shopHeading').textContent = 'This print counter link is invalid';
+  }
+}
+
+function updatePrice() {
+  el('copiesVal').textContent = copies;
+  el('totalPrice').textContent = pricePerPage ? `₹${pricePerPage * copies}` : '—';
+}
+
+el('dropzone').addEventListener('click', () => el('fileInput').click());
+el('fileInput').addEventListener('change', (e) => {
+  if (e.target.files[0]) selectFile(e.target.files[0]);
+});
+
+function selectFile(file) {
+  selectedFile = file;
+  el('fileName').textContent = file.name;
+  el('preview').classList.add('show');
+  el('payBtn').disabled = false;
+  el('errorMsg').classList.remove('show');
+}
+
+el('removeFile').addEventListener('click', () => {
+  selectedFile = null;
+  el('fileInput').value = '';
+  el('preview').classList.remove('show');
+  el('payBtn').disabled = true;
+});
+
+el('decCopies').addEventListener('click', () => {
+  copies = Math.max(1, copies - 1);
+  updatePrice();
+});
+el('incCopies').addEventListener('click', () => {
+  copies = copies + 1;
+  updatePrice();
+});
+
+el('payBtn').addEventListener('click', async () => {
+  if (!selectedFile) return;
+  el('payBtn').disabled = true;
+  el('payBtn').textContent = 'Uploading…';
+  el('errorMsg').classList.remove('show');
+
+  try {
+    const form = new FormData();
+    form.append('file', selectedFile);
+    form.append('shopSlug', slug);
+    form.append('copies', copies);
+
+    const uploadRes = await fetch('/api/jobs', { method: 'POST', body: form });
+    const uploadData = await uploadRes.json();
+    if (!uploadRes.ok) throw new Error(uploadData.error || 'Upload failed');
+
+    // NOTE: this calls the mock pay endpoint directly.
+    // Swap this for a real Razorpay checkout before going live —
+    // see README "Adding real UPI payments".
+    el('payBtn').textContent = 'Paying…';
+    const payRes = await fetch(`/api/jobs/${uploadData.jobId}/pay`, { method: 'POST' });
+    if (!payRes.ok) throw new Error('Payment failed');
+
+    showStatus(uploadData);
+    startPolling(uploadData.jobId);
+  } catch (err) {
+    el('errorMsg').textContent = err.message;
+    el('errorMsg').classList.add('show');
+    el('payBtn').disabled = false;
+    el('payBtn').textContent = 'Pay & print';
+  }
+});
+
+function showStatus(data) {
+  el('uploadCard').style.display = 'none';
+  el('statusCard').classList.add('show');
+  el('jobIdOut').textContent = data.jobId;
+  el('jobCopiesOut').textContent = data.copies;
+  el('jobAmountOut').textContent = `₹${data.amount}`;
+  setBadge('paid');
+}
+
+function setBadge(status) {
+  const badge = el('statusBadge');
+  badge.className = `badge ${status}`;
+  const labels = {
+    pending_payment: 'Awaiting payment',
+    paid: 'Sent to shop',
+    printed: 'Printed',
+    failed: 'Print failed',
+  };
+  el('statusText').textContent = labels[status] || status;
+}
+
+function startPolling(jobId) {
+  pollTimer = setInterval(async () => {
+    const res = await fetch(`/api/jobs/${jobId}`);
+    if (!res.ok) return;
+    const job = await res.json();
+    setBadge(job.status);
+    if (job.status === 'printed' || job.status === 'failed') {
+      clearInterval(pollTimer);
+    }
+  }, 2000);
+}
+
+loadShop();
+</script>
+</body>
+</html>
