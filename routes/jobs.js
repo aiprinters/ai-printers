@@ -2,6 +2,8 @@ const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const Razorpay = require('razorpay');
 const store = require('../store');
 const { generateId } = require('../utils/id');
 const { convertToPrintablePdf } = require('../utils/fileToPdf');
@@ -12,6 +14,20 @@ const upload = multer({
   dest: UPLOAD_DIR,
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
 });
+
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
+const paymentsConfigured = Boolean(RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET);
+
+const razorpay = paymentsConfigured
+  ? new Razorpay({ key_id: RAZORPAY_KEY_ID, key_secret: RAZORPAY_KEY_SECRET })
+  : null;
+
+if (!paymentsConfigured) {
+  console.warn(
+    'RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not set — payments are disabled until you add them.'
+  );
+}
 
 // Shared auth check: the print agent proves it belongs to the shop
 // that owns this job by sending the shop's agent token.
@@ -33,7 +49,7 @@ function requireAgentAuth(req, res, next) {
 module.exports = function jobsRouter(io) {
   const router = express.Router();
 
-  // Customer uploads a file and creates a print job
+  // Customer uploads a file, creates a print job, and opens a Razorpay order for it
   router.post('/', upload.single('file'), async (req, res) => {
     const { shopSlug, copies } = req.body;
 
@@ -45,6 +61,11 @@ module.exports = function jobsRouter(io) {
     if (!shop) {
       fs.unlink(req.file.path, () => {});
       return res.status(404).json({ error: 'Shop not found.' });
+    }
+
+    if (!paymentsConfigured) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(503).json({ error: 'Payments are not set up on this server yet.' });
     }
 
     const numCopies = Math.max(1, parseInt(copies, 10) || 1);
@@ -60,14 +81,29 @@ module.exports = function jobsRouter(io) {
       fs.unlink(req.file.path, () => {});
     }
 
+    const amount = shop.pricePerPage * numCopies;
+
+    let order;
+    try {
+      // Razorpay wants the amount in paise (smallest currency unit), not rupees.
+      order = await razorpay.orders.create({
+        amount: amount * 100,
+        currency: 'INR',
+        receipt: jobId,
+      });
+    } catch (err) {
+      return res.status(502).json({ error: 'Could not start payment. Try again.' });
+    }
+
     const job = store.createJob({
       id: jobId,
       shopId: shop.id,
       originalFilename: req.file.originalname,
       pdfPath,
       copies: numCopies,
-      amount: shop.pricePerPage * numCopies,
+      amount,
       status: 'pending_payment',
+      razorpayOrderId: order.id,
       createdAt: new Date().toISOString(),
     });
 
@@ -76,20 +112,42 @@ module.exports = function jobsRouter(io) {
       amount: job.amount,
       copies: job.copies,
       status: job.status,
+      razorpayOrderId: order.id,
+      razorpayKeyId: RAZORPAY_KEY_ID,
+      shopName: shop.name,
     });
   });
 
-  // Confirm payment — STUB. Replace with a Razorpay webhook before going
-  // live (see README "Adding real UPI payments"). Never trust a
-  // client-side "payment succeeded" call in production.
-  router.post('/:id/pay', (req, res) => {
+  // Verify a completed Razorpay payment before marking the job paid.
+  // This is the step that replaces the old client-trust stub — the
+  // signature can only be produced by Razorpay itself using your
+  // account's secret key, so a forged "success" call can't fake it.
+  router.post('/:id/verify-payment', (req, res) => {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
     const job = store.getJobById(req.params.id);
     if (!job) return res.status(404).json({ error: 'Job not found.' });
     if (job.status !== 'pending_payment') {
       return res.status(409).json({ error: `Job already ${job.status}.` });
     }
+    if (job.razorpayOrderId !== razorpay_order_id) {
+      return res.status(400).json({ error: 'Order mismatch.' });
+    }
 
-    store.updateJob(job.id, { status: 'paid', paidAt: new Date().toISOString() });
+    const expectedSignature = crypto
+      .createHmac('sha256', RAZORPAY_KEY_SECRET)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({ error: 'Payment could not be verified.' });
+    }
+
+    store.updateJob(job.id, {
+      status: 'paid',
+      paidAt: new Date().toISOString(),
+      razorpayPaymentId: razorpay_payment_id,
+    });
 
     const shop = store.getShopById(job.shopId);
     io.to(`shop:${shop.id}`).emit('new-job', {
