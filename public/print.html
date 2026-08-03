@@ -63,6 +63,7 @@
   .error { color: var(--danger); font-size: 13px; margin-top: 10px; display: none; }
   .error.show { display: block; }
 </style>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 </head>
 <body>
   <div class="ticket">
@@ -183,22 +184,59 @@ el('payBtn').addEventListener('click', async () => {
     const uploadData = await uploadRes.json();
     if (!uploadRes.ok) throw new Error(uploadData.error || 'Upload failed');
 
-    // NOTE: this calls the mock pay endpoint directly.
-    // Swap this for a real Razorpay checkout before going live —
-    // see README "Adding real UPI payments".
-    el('payBtn').textContent = 'Paying…';
-    const payRes = await fetch(`/api/jobs/${uploadData.jobId}/pay`, { method: 'POST' });
-    if (!payRes.ok) throw new Error('Payment failed');
-
-    showStatus(uploadData);
-    startPolling(uploadData.jobId);
+    el('payBtn').textContent = 'Opening payment…';
+    openRazorpayCheckout(uploadData);
   } catch (err) {
-    el('errorMsg').textContent = err.message;
-    el('errorMsg').classList.add('show');
-    el('payBtn').disabled = false;
-    el('payBtn').textContent = 'Pay & print';
+    showPayError(err.message);
   }
 });
+
+function openRazorpayCheckout(uploadData) {
+  const rzp = new Razorpay({
+    key: uploadData.razorpayKeyId,
+    order_id: uploadData.razorpayOrderId,
+    amount: uploadData.amount * 100,
+    currency: 'INR',
+    name: uploadData.shopName || 'AI Printers',
+    description: `${uploadData.copies} page(s) to print`,
+    handler: async (response) => {
+      try {
+        el('payBtn').textContent = 'Verifying…';
+        const verifyRes = await fetch(`/api/jobs/${uploadData.jobId}/verify-payment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+          }),
+        });
+        if (!verifyRes.ok) throw new Error('Payment could not be verified.');
+
+        showStatus(uploadData);
+        startPolling(uploadData.jobId);
+      } catch (err) {
+        showPayError(err.message);
+      }
+    },
+    modal: {
+      ondismiss: () => {
+        showPayError('Payment cancelled.');
+      },
+    },
+    theme: { color: '#1B3A6B' },
+  });
+
+  rzp.on('payment.failed', () => showPayError('Payment failed. Please try again.'));
+  rzp.open();
+}
+
+function showPayError(msg) {
+  el('errorMsg').textContent = msg;
+  el('errorMsg').classList.add('show');
+  el('payBtn').disabled = false;
+  el('payBtn').textContent = 'Pay & print';
+}
 
 function showStatus(data) {
   el('uploadCard').style.display = 'none';
